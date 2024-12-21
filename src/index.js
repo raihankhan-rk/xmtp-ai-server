@@ -2,23 +2,49 @@ import 'dotenv/config';
 import express from 'express';
 import { XMTPChatController } from './controllers/chat.controller.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { encryptResponse, decryptMessage } from './utils/encryption.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
 
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, '../public')));
+
 // Initialize controller
 const chatController = new XMTPChatController();
 
-// Simple chat endpoint
-app.post('/api/chat', async (req, res, next) => {
-    try {
-        const { message } = req.body;
-        if (!message) {
-            throw new Error('Message is required');
-        }
+// Encryption middleware
+const encryptionMiddleware = async (req, res, next) => {
+    const { encryptedMessage, iv } = req.body;
+    if (!encryptedMessage || !iv) {
+        return next(new Error('Encrypted message and IV are required'));
+    }
+    next();
+};
 
-        const response = await chatController.chat(message);
-        res.json({ response });
+// Update chat endpoint
+app.post('/api/chat', encryptionMiddleware, async (req, res, next) => {
+    try {
+        const { encryptedMessage, iv } = req.body;
+        
+        // Decrypt the incoming message
+        const decryptedMessage = await decryptMessage(encryptedMessage, iv);
+        
+        // Process with AI
+        const response = await chatController.chat(decryptedMessage);
+
+        // Encrypt the response using the client's IV
+        const encryptedResponse = await encryptResponse(response, iv);
+        
+        res.json({
+            encryptedResponse,
+            iv
+        });
     } catch (error) {
         next(error);
     }

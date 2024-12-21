@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XMTP AI Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+
+        .chat-box {
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+            overflow-y: auto;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 70%;
+        }
+
+        .user-message {
+            background: #007bff;
+            color: white;
+            margin-left: auto;
+        }
+
+        .bot-message {
+            background: #e9ecef;
+            color: black;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .network-info {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background: #e9ecef;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>XMTP AI Chat</h1>
+        <div class="chat-box" id="chatBox"></div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type your message...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+        <div class="network-info">
+            <h3>Network Information</h3>
+            <div class="status" id="status">
+                Check the browser's Network tab (F12) to see the encrypted messages
+            </div>
+            <div class="encryption-info" id="encryptionInfo"></div>
+        </div>
+    </div>
+
+    <script>
+        // Encryption setup
+        let encryptionKey;
+        
+        // Use the same key as server
+        const ENCRYPTION_KEY = 'YOUR-32-BYTE-SECRET-KEY-HERE12345';
+
+        async function initializeEncryption() {
+            try {
+                // Convert the secret to a crypto key
+                const keyMaterial = await window.crypto.subtle.importKey(
+                    "raw",
+                    new TextEncoder().encode(ENCRYPTION_KEY),
+                    { name: "PBKDF2" },
+                    false,
+                    ["deriveBits", "deriveKey"]
+                );
+
+                // Derive the actual encryption key
+                encryptionKey = await window.crypto.subtle.deriveKey(
+                    {
+                        name: "PBKDF2",
+                        salt: new TextEncoder().encode("xmtp-salt"),
+                        iterations: 100000,
+                        hash: "SHA-256"
+                    },
+                    keyMaterial,
+                    { name: "AES-GCM", length: 256 },
+                    true,
+                    ["encrypt", "decrypt"]
+                );
+                
+                document.getElementById('encryptionInfo').textContent = 'Encryption initialized';
+            } catch (error) {
+                console.error('Encryption initialization error:', error);
+                document.getElementById('encryptionInfo').textContent = 'Encryption initialization failed';
+            }
+        }
+
+        function arrayBufferToBase64(buffer) {
+            return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer)));
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes;
+        }
+
+        async function encryptMessage(message) {
+            try {
+                const encoder = new TextEncoder();
+                const encodedMessage = encoder.encode(message);
+                
+                // Generate a new IV for each message
+                const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+                const encryptedData = await window.crypto.subtle.encrypt(
+                    {
+                        name: "AES-GCM",
+                        iv
+                    },
+                    encryptionKey,
+                    encodedMessage
+                );
+
+                return {
+                    encrypted: arrayBufferToBase64(encryptedData),
+                    iv: arrayBufferToBase64(iv)
+                };
+            } catch (error) {
+                console.error('Encryption error:', error);
+                throw new Error('Failed to encrypt message');
+            }
+        }
+
+        async function decryptMessage(encryptedMessage, iv) {
+            try {
+                const decryptedData = await window.crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv: base64ToArrayBuffer(iv)
+                    },
+                    encryptionKey,
+                    base64ToArrayBuffer(encryptedMessage)
+                );
+
+                const decoder = new TextDecoder();
+                return decoder.decode(decryptedData);
+            } catch (error) {
+                console.error('Decryption error:', error);
+                throw new Error('Failed to decrypt response');
+            }
+        }
+
+        const chatBox = document.getElementById('chatBox');
+        const messageInput = document.getElementById('messageInput');
+        const statusDiv = document.getElementById('status');
+
+        function addMessage(message, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            messageDiv.textContent = message;
+            chatBox.appendChild(messageDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, true);
+            messageInput.value = '';
+
+            try {
+                statusDiv.textContent = 'Encrypting and sending message...';
+                
+                // Encrypt the message
+                const encryptedData = await encryptMessage(message);
+                
+                const response = await fetch('http://localhost:3000/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        encryptedMessage: encryptedData.encrypted,
+                        iv: encryptedData.iv
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Decrypt the response
+                const decryptedResponse = await decryptMessage(data.encryptedResponse, data.iv);
+                
+                // Add bot response to chat
+                addMessage(decryptedResponse);
+                
+                statusDiv.textContent = 'Encrypted message sent and response received successfully!';
+            } catch (error) {
+                console.error('Error:', error);
+                statusDiv.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Allow Enter key to send message
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Initialize encryption on page load
+        initializeEncryption();
+    </script>
+</body>
+</html> 
