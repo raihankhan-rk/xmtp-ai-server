@@ -132,6 +132,29 @@ class XMTPService {
             console.error('Error streaming conversation messages:', error);
         }
     }
+
+    async getConversationMessages(address) {
+        try {
+            if (!this.client) {
+                throw new Error('XMTP client not initialized');
+            }
+
+            let conversation = this.conversations.get(address);
+            if (!conversation) {
+                conversation = await this.client.conversations.newConversation(address);
+                this.conversations.set(address, conversation);
+            }
+
+            const messages = await conversation.messages();
+            return messages.map(message => ({
+                from: message.senderAddress,
+                content: message.content,
+                timestamp: message.sent
+            }));
+        } catch (error) {
+            throw new Error(`Failed to get messages: ${error.message}`);
+        }
+    }
 }
 
 export default new XMTPService(); 

@@ -1,58 +1,51 @@
 import 'dotenv/config';
 import express from 'express';
-import xmtpService from './services/XMTPService.js';
-import { setupAIAgent } from './agent.js';
+import { XMTPChatController } from './controllers/chat.controller.js';
+import { errorHandler } from './middleware/error.middleware.js';
 
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+// Initialize controller
+const chatController = new XMTPChatController();
 
-async function startServer() {
+// Simple chat endpoint
+app.post('/api/chat', async (req, res, next) => {
     try {
-        // Initialize AI agent
-        const aiAgent = await setupAIAgent();
+        const { message } = req.body;
+        if (!message) {
+            throw new Error('Message is required');
+        }
 
-        // Initialize XMTP service
-        const { address } = await xmtpService.initialize(process.env.LOCAL_KEY);
-        console.log('🤖 AI Agent initialized with address:', address);
-
-        // Set up message handler
-        xmtpService.setMessageHandler(async (message) => {
-            try {
-                console.log('\n📩 Received:', message.decoded);
-                
-                const response = await aiAgent.processMessage(message.content);
-                console.log('🤖 AI Response:', response);
-                
-                await xmtpService.sendMessage(response, message.from);
-                console.log('✈️ Response sent');
-            } catch (error) {
-                console.error('Error handling message:', error);
-            }
-        });
-
-        // Basic health check endpoint
-        app.get('/health', (req, res) => {
-            res.json({ 
-                status: 'healthy',
-                address: xmtpService.client?.address
-            });
-        });
-
-        app.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
-        });
+        const response = await chatController.chat(message);
+        res.json({ response });
     } catch (error) {
-        console.error('Failed to start server:', error);
-        process.exit(1);
+        next(error);
     }
-}
-
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\n👋 Shutting down server...');
-    process.exit(0);
 });
 
-startServer(); 
+// Get chat history
+app.get('/api/chat/history', async (req, res, next) => {
+    try {
+        const messages = await chatController.getHistory();
+        res.json(messages);
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Health check
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'healthy',
+        botAddress: chatController.getAddress()
+    });
+});
+
+// Error handling
+app.use(errorHandler);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+}); 
